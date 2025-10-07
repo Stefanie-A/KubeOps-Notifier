@@ -4,8 +4,6 @@ This repository contains a **full DevOps pipeline** implementation for deploying
 
 The goal of this project is to demonstrate **CI/CD automation, GitOps practices, and infrastructure as code (IaC)** for managing cloud-native applications.
 
-![Architecture Diagram](./image.png)
-
 ### Flow:
 
 1. **Developer (DEV)** pushes code to **GitHub**.
@@ -49,14 +47,14 @@ eksctl create cluster \
   --name <cluster-name> \
   --region <region> \
   --nodegroup-name standard-workers \
-  --nodes-type <node-type>\
+  --node-type <node-type>\
   -- nodes <> --nodes-min <> --nodes-max<>
 ```
 Make sure OIDC is enabled for your cluster:
 ```bash
 eksctl utils associate-iam-oidc-provider \
-  --cluster kox-cluster \
-  --region us-east-1 \
+  --cluster <cluster-name> \
+  --region <region> \
   --approve
 ```
 Update your kubeconfig to connect kubectl to the new cluster:
