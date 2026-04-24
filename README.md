@@ -1,182 +1,91 @@
-# 🚀 DevOps Full-Stack Project
+# KubeOps Notifier
 
-This repository contains a **full DevOps pipeline** implementation for deploying a containerized full-stack application on **AWS EKS** using **Terraform, Docker, GitHub Actions, and ArgoCD**.
+Reactive Kubernetes event watcher that streams cluster events and dispatches alerts to Slack (or other channels).
 
-The goal of this project is to demonstrate **CI/CD automation, GitOps practices, and infrastructure as code (IaC)** for managing cloud-native applications.
+## Stack
 
-### Flow:
+- **Infra**: Terraform (EKS + VPC + S3 remote state + DynamoDB lock)
+- **App**: Python / kubernetes-client + Prometheus metrics
+- **AIOps Engine**: LangChain + OpenRouter (configurable free-tier models)
+- **GitOps**: ArgoCD (App-of-Apps pattern)
+- **Observability**: kube-prometheus-stack (Prometheus + Grafana + Alertmanager)
+- **Logging**: Loki + Fluent Bit
+- **Security**: Falco (eBPF) + Falcosidekick → Slack/Loki
+- **Pipeline**: GitHub Actions DevSecOps (Gitleaks → Bandit → Checkov → Trivy → Deploy → GitOps tag update)
 
-1. **Developer (DEV)** pushes code to **GitHub**.
-2. **GitHub Actions (CI/CD)** pipeline runs:
+## AIOps Flow
 
-   * Builds and tests the code.
-   * Builds and pushes Docker images to Docker Hub.
-   * Applies infrastructure using Terraform.
-   * Deploys manifests to GitHub (GitOps repo).
-3. **ArgoCD** watches the GitOps repo and syncs changes to **Amazon EKS**.
-4. **Application** becomes available on Kubernetes.
-
----
-
-## 🛠️ Tools & Technologies
-
-* **Version Control:** GitHub
-* **CI/CD:** GitHub Actions
-* **Containerization:** Docker
-* **Orchestration:** Amazon Elastic Kubernetes Service (EKS)
-* **Infrastructure as Code:** Terraform
-* **GitOps:** ArgoCD
-* **Secret Management:** AWS Secrets Manager
-* **Monitoring:** Prometheus & Grafana
-
-## ⚙️ Setup Instructions
-
-### 1️⃣ Clone Repository
-
-```bash
-git clone https://github.com/<your-username>/<repo>.git
-cd <repo>
+```
+K8s Event → kubeops-notifier
+                └── ALERT_REASONS match?
+                        └── LangChain Agent (OpenRouter)
+                                ├── describe_pod        (k8s API)
+                                ├── get_pod_logs        (k8s API)
+                                ├── query_prometheus    (PromQL)
+                                ├── query_loki_logs     (LogQL)
+                                └── list_recent_events  (k8s API)
+                                        └── RCA + Remediation → Slack
 ```
 
-### 2️⃣ Create EKS Cluster (AWS CLI)
+Set `AIOPS_ENABLED=false` in the ConfigMap to disable the agent and fall back to plain alerts.
 
-Instead of Terraform, the EKS cluster is created with AWS CLI:
+## Required GitHub Secrets
 
-```bash
-eksctl create cluster \
-  --name <cluster-name> \
-  --region <region> \
-  --nodegroup-name standard-workers \
-  --node-type <node-type>\
-  -- nodes <> --nodes-min <> --nodes-max<>
-```
-Make sure OIDC is enabled for your cluster:
-```bash
-eksctl utils associate-iam-oidc-provider \
-  --cluster <cluster-name> \
-  --region <region> \
-  --approve
-```
-Update your kubeconfig to connect kubectl to the new cluster:
+| Secret | Description |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | IAM key with EKS/VPC permissions |
+| `AWS_SECRET_ACCESS_KEY` | IAM secret |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook (stored as k8s secret) |
+| `GH_PAT` | GitHub PAT with repo write access (for GitOps tag commits) |
+
+## Bootstrap Remote State
+
+Before first `terraform apply`, create the S3 bucket and DynamoDB table:
 
 ```bash
-aws eks update-kubeconfig --region <region> --name <cluster-name>
-```
-Create IAM Policy
-
-This policy allows reading secrets from Secrets Manager:
-
-```bash
-aws iam create-policy \
-  --policy-name <policy-name> \
-  --policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [
-      {
-        "Effect": "Allow",
-        "Action": [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret"
-        ],
-        "Resource": "*"
-      }
-    ]
-  }'
-```
-Create IAM Role with Trust Policy
-```bash
-aws iam create-role \
-  --role-name <role-name> \
-  --assume-role-policy-document "{
-    \"Version\": \"2012-10-17\",
-    \"Statement\": [
-      {
-        \"Effect\": \"Allow\",
-        \"Principal\": {
-          \"Federated\": \"arn:aws:iam::<account-id>:oidc-provider/oidc.eks.<region>.amazonaws.com/id/<oidc-id>\"
-        },
-        \"Action\": \"sts:AssumeRoleWithWebIdentity\",
-        \"Condition\": {
-          \"StringEquals\": {
-            \"oidc.eks.<region>.amazonaws.com/id/<oidc-id>:sub\": \"system:serviceaccount:external-secrets:service-account\"
-          }
-        }
-      }
-    ]
-  }"
- ```
-Attach Policy to Role
-```bash
-aws iam attach-role-policy \
-  --policy-arn arn:aws:iam::<account-id>:policy/ExternalSecretsPolicy \
-  --role-name <role-name>
-```
-Annotate Kubernetes Service Account
-```bash
-kubectl annotate serviceaccount service-account \
-  -n external-secrets \
-  eks.amazonaws.com/role-arn=arn:aws:iam::<account-id>:role/<role-name>
-```
-### 3️⃣ Provision Supporting Infra (Terraform)
-
-Use Terraform for networking (VPC, subnets, gateways) or additional AWS services:
-
-```bash
-cd terraform
-terraform init
-terraform plan
-terraform apply -auto-approve
+aws s3api create-bucket --bucket kubeops-notifier-tfstate --region us-east-1
+aws dynamodb create-table \
+  --table-name kubeops-notifier-tflock \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST
 ```
 
-### 4️⃣ Build & Push Docker Images
+## Create Cluster Secrets
 
 ```bash
-docker build -t <dockerhub-username>/app-frontend ./Application-Code/frontend
-docker push <dockerhub-username>/app-frontend
-
-docker build -t <dockerhub-username>/app-backend ./Application-Code/backend
-docker push <dockerhub-username>/app-backend
+kubectl create secret generic kubeops-notifier-secrets \
+  --from-literal=slack-webhook-url=https://hooks.slack.com/services/... \
+  --from-literal=openrouter-api-key=sk-or-... \
+  -n kubeops
 ```
 
-### 5️⃣ Deploy Using Helm
+Get your OpenRouter API key at [openrouter.ai/keys](https://openrouter.ai/keys). The default model is `mistralai/mistral-7b-instruct:free` — change `OPENROUTER_MODEL` in the ConfigMap to use a different one. See available free models at [openrouter.ai/models?q=free](https://openrouter.ai/models?q=free).
 
-Use Helm to install supporting services:
+## GitOps Flow
+
+1. Push to `main` → pipeline builds + scans image → pushes to GHCR
+2. Pipeline updates `k8s/deployment.yaml` with new SHA tag and commits back
+3. ArgoCD detects the diff and syncs the cluster automatically
+
+## Accessing Grafana
 
 ```bash
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add external-secrets https://charts.external-secrets.io
-
-helm install argocd argo/argo-cd -n gitops --create-namespace
-helm install monitoring prometheus-community/kube-prometheus-stack -n monitoring
-helm install external-secrets external-secrets/external-secrets -n external-secrets
-
-#Create namespaces(gitops, my-app, external-secrets)
-helm install <chart> <path>
+kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
+# default login: admin / <GRAFANA_ADMIN_PASSWORD secret>
 ```
 
-### 6️⃣ GitHub Actions CI/CD
+## Accessing ArgoCD UI
 
-Pipeline automates:
+```bash
+kubectl port-forward svc/argocd-server 8080:80 -n argocd
+# get initial admin password:
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+```
 
-* Build & test
-* Docker push
-* Helm deploys
-* GitOps sync via ArgoCD
+## Replace Placeholders
 
-## ✅ Features
-
-* Fully automated **CI/CD** pipeline.
-* Infrastructure deployed via **Terraform**.
-* Applications built & containerized with **Docker**.
-* Kubernetes deployment with **ArgoCD (GitOps)**.
-* Secure secrets via **AWS Secrets Manager**.
-* Monitoring with **Prometheus & Grafana**.
-
-## 📌 Future Improvements
-
-* Add **Blue/Green or Canary Deployments** with Argo Rollouts.
-* Integrate **service mesh (Istio or Linkerd)**.
-* Expand monitoring dashboards with Grafana.
-* Implement logging with ELK/EFK stack.
-
+Before applying ArgoCD manifests, replace these in `k8s/argocd/`:
+- `$GITHUB_ORG` / `$GITHUB_REPO` — your GitHub org and repo name
+- `$GRAFANA_ADMIN_PASSWORD` — desired Grafana admin password
+- `$SLACK_WEBHOOK_URL` — your Slack webhook URL
