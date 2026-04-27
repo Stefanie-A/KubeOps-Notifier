@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Configmap
+metadata:
+  name: kubeops-notifier-config
+  namespace: kubeops
+data:
+  NOTIFICATION_CHANNEL: "slack"
+  LOG_LEVEL: "info"
+  WATCH_NAMESPACES: "default,kube-system"
+  AIOPS_ENABLED: "true"
+  OPENROUTER_MODEL: "mistralai/mistral-7b-instruct-v0.1.Q4_0.gguf"
+  PROMETHEUS_URL: "http://kube-prometheus-stack-prometheus.kubeops.svc.cluster.local:9090"
+  LOKI_URL: "http://loki-stack.logging.svc.cluster.local:3100"

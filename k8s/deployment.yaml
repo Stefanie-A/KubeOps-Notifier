@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeops-notifier
+  namespace: kubeops
+  labels:
+    app: kubeops-notifier
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kubeops-notifier
+  template:
+    metadata:
+      labels:
+        app: kubeops-notifier
+    spec:
+      containers:
+        - name: notifier
+          image: ghcr.io/your-github-username/kubeops-notifier:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KUBEOPS_API_URL
+              value: "http://kubeops-api.kubeops.svc.cluster.local"
+            - name: KUBEOPS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kubeops-api-secret
+                  key: api-key
+
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeops-notifier-sa
+  namespace: kubeops
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeops-notifier-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events", "nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeops-notifier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeops-notifier-role
+subjects:
+  - kind: ServiceAccount
+    name: kubeops-notifier-sa
+    namespace: kubeops

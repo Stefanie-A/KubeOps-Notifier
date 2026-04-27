@@ -1,0 +1,69 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: "58.x"
+    helm:
+      releaseName: kube-prometheus-stack
+      valuesObject:
+        grafana:
+          enabled: true
+          adminPassword: "$GRAFANA_ADMIN_PASSWORD"
+          persistence:
+            enabled: true
+            size: 5Gi
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+                - name: kubeops
+                  folder: KubeOps
+                  type: file
+                  options:
+                    path: /var/lib/grafana/dashboards/kubeops
+          dashboards:
+            kubeops:
+              kubeops-notifier:
+                url: https://raw.githubusercontent.com/$GITHUB_ORG/$GITHUB_REPO/main/k8s/monitoring/dashboards/kubeops-notifier.json
+        prometheus:
+          prometheusSpec:
+            retention: 15d
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 20Gi
+        alertmanager:
+          enabled: true
+          config:
+            global:
+              slack_api_url: "https://hooks.slack.com/services/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"
+            route:
+              receiver: slack-notifications
+              group_by: ["alertname", "namespace"]
+            receivers:
+              - name: slack-notifications
+                slack_configs:
+                  - channel: "#kubeops-alerts"
+                    title: "{{ .GroupLabels.alertname }}"
+                    text: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

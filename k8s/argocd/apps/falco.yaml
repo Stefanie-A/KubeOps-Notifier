@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falco
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://falcosecurity.github.io/charts
+    chart: falco
+    targetRevision: "4.x"
+    helm:
+      releaseName: falco
+      valuesObject:
+        driver:
+          kind: ebpf   # preferred on EKS (no kernel module needed)
+        falco:
+          grpc:
+            enabled: true
+          grpc_output:
+            enabled: true
+          json_output: true
+          log_stderr: true
+          rules_file:
+            - /etc/falco/falco_rules.yaml
+            - /etc/falco/falco_rules.local.yaml
+            - /etc/falco/k8s_audit_rules.yaml
+        falcosidekick:
+          enabled: true
+          config:
+            slack:
+              webhookurl: "https://hooks.slack.com/services/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"
+              channel: "#kubeops-security"
+              minimumpriority: warning
+            loki:
+              hostport: "http://loki-stack.logging.svc.cluster.local:3100"
+              minimumpriority: warning
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: falco
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
