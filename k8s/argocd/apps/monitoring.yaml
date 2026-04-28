@@ -47,7 +47,7 @@ spec:
           enabled: true
           config:
             global:
-              slack_api_url: "https://hooks.slack.com/services/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"
+              slack_api_url: ""
             route:
               receiver: slack-notifications
               group_by: ["alertname", "namespace"]
